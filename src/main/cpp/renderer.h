@@ -26,7 +26,10 @@ public:
     // When passthrough_active is true the active eye clears with alpha=0 so
     // the passthrough camera layer shows through; the inactive eye stays black.
     void render_eye(int eye, uint32_t image_index, EyeMode mode,
-                    bool passthrough_active = false) const;
+                    bool  passthrough_active = false,
+                    float opacity            = 1.0f,
+                    bool  is_preferred       = false,
+                    bool  edge_on            = false) const;
 
     EGLDisplay egl_display = EGL_NO_DISPLAY;
     EGLContext egl_context = EGL_NO_CONTEXT;

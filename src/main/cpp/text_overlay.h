@@ -6,14 +6,27 @@ class TextOverlay {
 public:
     bool init();
     void destroy();
-    void render(uint32_t width, uint32_t height, EyeMode mode) const;
+
+    // Dynamic text overlay: mode label on line 1, opacity readout on line 2.
+    // is_preferred: star badge shown when the user's learned preferred mode is active.
+    // edge_on: "EDGE" badge shown when edge-enhance passthrough filter is active.
+    void render(uint32_t width, uint32_t height,
+                EyeMode mode, float opacity,
+                bool passthrough_active, bool is_preferred,
+                bool edge_on) const;
 
 private:
-    GLuint prog_     = 0;
-    GLuint vao_      = 0;
-    GLuint font_tex_ = 0;
-    GLint  loc_res_  = -1;
-    GLint  loc_mode_ = -1;
-    GLint  loc_font_ = -1;
-    bool   ready_    = false;
+    static int charIdx(char c);
+
+    GLuint prog_        = 0;
+    GLuint vao_         = 0;
+    GLuint font_tex_    = 0;
+    GLint  loc_res_     = -1;
+    GLint  loc_mode_    = -1;  // 0/1/2 — drives label colour only
+    GLint  loc_chars_   = -1;  // int[32]: line-1 char indices
+    GLint  loc_len_     = -1;  // line-1 char count
+    GLint  loc_chars2_  = -1;  // int[16]: line-2 char indices
+    GLint  loc_len2_    = -1;  // line-2 char count (0 = hidden)
+    GLint  loc_font_    = -1;
+    bool   ready_       = false;
 };

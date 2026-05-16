@@ -89,7 +89,8 @@ void Renderer::create_eye_framebuffers(int eye, const std::vector<GLuint>& textu
 }
 
 void Renderer::render_eye(int eye, uint32_t image_index, EyeMode mode,
-                           bool passthrough_active) const {
+                           bool passthrough_active, float opacity,
+                           bool is_preferred, bool edge_on) const {
     const auto& fb = eye_fbos_[eye][image_index];
     glBindFramebuffer(GL_FRAMEBUFFER, fb.fbo);
     glViewport(0, 0, fb.width, fb.height);
@@ -111,7 +112,8 @@ void Renderer::render_eye(int eye, uint32_t image_index, EyeMode mode,
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (eye_is_active(mode, eye)) {
-        overlay_.render(fb.width, fb.height, mode);
+        overlay_.render(fb.width, fb.height, mode, opacity,
+                        passthrough_active, is_preferred, edge_on);
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);

@@ -228,8 +228,13 @@ void android_main(android_app* app) {
                 wait.timeout = XR_INFINITE_DURATION;
                 xrWaitSwapchainImage(sc.handle, &wait);
 
+                bool eye_preferred = (preferred_mode == eye_mode &&
+                                      eye_mode != EyeMode::Both);
                 renderer.render_eye(eye, image_index, eye_mode,
-                                    xr.passthrough_active);
+                                    xr.passthrough_active,
+                                    xr.passthrough_opacity,
+                                    eye_preferred,
+                                    /*edge_on=*/false);
 
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
                 xrReleaseSwapchainImage(sc.handle, &release);
