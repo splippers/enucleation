@@ -1,5 +1,7 @@
 #include <android_native_app_glue.h>
 #include <android/log.h>
+#include <cstdio>
+#include <cerrno>
 #include "xr_context.h"
 #include "renderer.h"
 #include "eye_controller.h"
@@ -21,6 +23,32 @@ static void handle_android_cmd(android_app* app, int32_t cmd) {
 // Passthrough runs whenever exactly one eye is active (LeftOnly / RightOnly).
 // When both eyes are rendering normally, passthrough is paused.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Persist the chosen eye mode across app restarts.
+// Uses a plain text file in the app's internal-storage dir.
+// The path is passed in from android_app::activity at startup.
+// ---------------------------------------------------------------------------
+static void save_eye_mode(const char* dir, EyeMode mode) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/eyemode.txt", dir);
+    FILE* f = std::fopen(path, "w");
+    if (!f) { LOGI("Could not save eye mode: %s", std::strerror(errno)); return; }
+    std::fprintf(f, "%d\n", static_cast<int>(mode));
+    std::fclose(f);
+}
+
+static EyeMode load_eye_mode(const char* dir) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/eyemode.txt", dir);
+    FILE* f = std::fopen(path, "r");
+    if (!f) return EyeMode::Both;  // default on first run
+    int v = 0;
+    std::fscanf(f, "%d", &v);
+    std::fclose(f);
+    if (v < 0 || v > 2) return EyeMode::Both;
+    return static_cast<EyeMode>(v);
+}
+
 static void apply_eye_mode_passthrough(XrContext& xr, EyeMode mode) {
     if (mode == EyeMode::Both) {
         xr.stop_passthrough();
@@ -38,10 +66,11 @@ void android_main(android_app* app) {
 
     XrContext  xr{};
     Renderer   renderer{};
-    EyeMode    eye_mode = EyeMode::Both;
+    const char* internal_dir = app->activity->internalDataPath;
+    EyeMode    eye_mode = load_eye_mode(internal_dir);
     bool       initialized = false;
 
-    LOGI("MonoView starting");
+    LOGI("MonoView starting — restored eye mode: %s", mode_name(eye_mode));
 
     while (!app->destroyRequested && !xr.quit) {
         // ---- Android event pump ----
@@ -89,6 +118,8 @@ void android_main(android_app* app) {
             eye_mode = cycle_mode(eye_mode);
             LOGI("Eye mode → %s", mode_name(eye_mode));
             apply_eye_mode_passthrough(xr, eye_mode);
+            xr.apply_haptic_confirm();
+            save_eye_mode(internal_dir, eye_mode);
         }
 
         // ---- Frame ----

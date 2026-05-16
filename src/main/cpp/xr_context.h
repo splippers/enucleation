@@ -35,6 +35,7 @@ struct XrContext {
     // Input
     XrActionSet action_set     = XR_NULL_HANDLE;
     XrAction    cycle_action   = XR_NULL_HANDLE;  // A button → cycle eye mode
+    XrAction    haptic_action  = XR_NULL_HANDLE;  // haptic output (both controllers)
     XrPath      hand_paths[2]  = {};              // left, right
 
     // EGL state shared with Renderer
@@ -92,6 +93,9 @@ struct XrContext {
                    bool should_render);
 
     bool poll_cycle_button() const;  // true on rising edge of cycle action
+
+    // Trigger a short confirmation buzz on both controllers (non-fatal if haptics unavailable).
+    void apply_haptic_confirm();
 
     void destroy();
 };

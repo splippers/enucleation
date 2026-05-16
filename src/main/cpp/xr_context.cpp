@@ -209,6 +209,15 @@ bool XrContext::create_input_actions() {
     ac_info.subactionPaths      = hand_paths;
     XR_CHECK(xrCreateAction(action_set, &ac_info, &cycle_action));
 
+    // Haptic output action — confirmation buzz when mode changes.
+    XrActionCreateInfo hap_info{XR_TYPE_ACTION_CREATE_INFO};
+    std::strncpy(hap_info.actionName,          "confirm_haptic", XR_MAX_ACTION_NAME_SIZE);
+    std::strncpy(hap_info.localizedActionName, "Mode Change Confirm", XR_MAX_LOCALIZED_ACTION_NAME_SIZE);
+    hap_info.actionType          = XR_ACTION_TYPE_VIBRATION_OUTPUT;
+    hap_info.countSubactionPaths = 2;
+    hap_info.subactionPaths      = hand_paths;
+    XR_CHECK(xrCreateAction(action_set, &hap_info, &haptic_action));
+
     return true;
 }
 
@@ -218,9 +227,15 @@ bool XrContext::attach_action_sets() {
     xrStringToPath(instance, "/user/hand/right/input/a/click", &a_click);
     xrStringToPath(instance, "/user/hand/left/input/x/click",  &x_click);
 
+    XrPath left_haptic, right_haptic;
+    xrStringToPath(instance, "/user/hand/left/output/haptic",  &left_haptic);
+    xrStringToPath(instance, "/user/hand/right/output/haptic", &right_haptic);
+
     XrActionSuggestedBinding bindings[] = {
-        {cycle_action, a_click},
-        {cycle_action, x_click},
+        {cycle_action,  a_click},
+        {cycle_action,  x_click},
+        {haptic_action, left_haptic},
+        {haptic_action, right_haptic},
     };
 
     XrPath oculus_profile;
@@ -229,7 +244,7 @@ bool XrContext::attach_action_sets() {
     XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     suggested.interactionProfile     = oculus_profile;
     suggested.suggestedBindings      = bindings;
-    suggested.countSuggestedBindings = 2;
+    suggested.countSuggestedBindings = 4;
     XR_CHECK(xrSuggestInteractionProfileBindings(instance, &suggested));
 
     XrSessionActionSetsAttachInfo attach_info{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
@@ -442,6 +457,23 @@ void XrContext::end_frame(XrTime display_time,
         end_info.layers               = should_render ? layers : nullptr;
 
         xrEndFrame(session, &end_info);
+    }
+}
+
+void XrContext::apply_haptic_confirm() {
+    if (haptic_action == XR_NULL_HANDLE || session == XR_NULL_HANDLE) return;
+
+    XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+    vibration.amplitude = 0.7f;
+    vibration.duration  = 80'000'000;  // 80 ms in nanoseconds
+    vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+
+    for (int hand = 0; hand < 2; ++hand) {
+        XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+        info.action        = haptic_action;
+        info.subactionPath = hand_paths[hand];
+        xrApplyHapticFeedback(session, &info,
+            reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
     }
 }
 
