@@ -17,6 +17,20 @@ static void handle_android_cmd(android_app* app, int32_t cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// Apply the current eye mode to passthrough state.
+// Passthrough runs whenever exactly one eye is active (LeftOnly / RightOnly).
+// When both eyes are rendering normally, passthrough is paused.
+// ---------------------------------------------------------------------------
+static void apply_eye_mode_passthrough(XrContext& xr, EyeMode mode) {
+    if (mode == EyeMode::Both) {
+        xr.stop_passthrough();
+    } else {
+        // LeftOnly or RightOnly — enable camera passthrough in active eye.
+        xr.start_passthrough();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 void android_main(android_app* app) {
@@ -46,6 +60,11 @@ void android_main(android_app* app) {
             if (!xr.create_input_actions())    continue;
             if (!xr.attach_action_sets())      continue;
 
+            // Set up passthrough — non-fatal if the device doesn't support it.
+            if (!xr.create_passthrough()) {
+                LOGI("Passthrough unavailable — will render without camera feed");
+            }
+
             // Renderer shares the EGL context created by XrContext.
             if (!renderer.init(xr.egl_display, xr.egl_context)) continue;
 
@@ -69,6 +88,7 @@ void android_main(android_app* app) {
         if (xr.poll_cycle_button()) {
             eye_mode = cycle_mode(eye_mode);
             LOGI("Eye mode → %s", mode_name(eye_mode));
+            apply_eye_mode_passthrough(xr, eye_mode);
         }
 
         // ---- Frame ----
@@ -92,7 +112,8 @@ void android_main(android_app* app) {
                 wait.timeout = XR_INFINITE_DURATION;
                 xrWaitSwapchainImage(sc.handle, &wait);
 
-                renderer.render_eye(eye, image_index, eye_mode);
+                renderer.render_eye(eye, image_index, eye_mode,
+                                    xr.passthrough_active);
 
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
                 xrReleaseSwapchainImage(sc.handle, &release);

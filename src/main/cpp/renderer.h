@@ -22,8 +22,11 @@ public:
     void create_eye_framebuffers(int eye, const std::vector<GLuint>& textures,
                                  uint32_t width, uint32_t height);
 
-    // Render (just a clear) into the acquired swapchain image for this eye.
-    void render_eye(int eye, uint32_t image_index, EyeMode mode) const;
+    // Render into the acquired swapchain image for this eye.
+    // When passthrough_active is true the active eye clears with alpha=0 so
+    // the passthrough camera layer shows through; the inactive eye stays black.
+    void render_eye(int eye, uint32_t image_index, EyeMode mode,
+                    bool passthrough_active = false) const;
 
     EGLDisplay egl_display = EGL_NO_DISPLAY;
     EGLContext egl_context = EGL_NO_CONTEXT;

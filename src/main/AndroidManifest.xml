@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Required for XR_FB_passthrough camera access -->
+    <uses-permission android:name="com.oculus.permission.USE_SCENE" />
+
     <uses-feature android:name="android.hardware.vr.headtracking"
         android:required="true" android:version="1" />
 
@@ -26,6 +29,8 @@
             </intent-filter>
 
             <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
+            <!-- Declare passthrough support so the OS grants camera access -->
+            <meta-data android:name="com.oculus.ossplash" android:value="true" />
         </activity>
     </application>
 

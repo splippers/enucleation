@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.so
+!src/main/jniLibs/**/*.so
+.cxx/
+.idea/
+*.iml
+.DS_Store

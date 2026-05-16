@@ -9,6 +9,9 @@
 #include <vector>
 #include <string>
 
+// XR_FB_passthrough PFN_ typedefs are provided by openxr.h (SDK >= 1.0.22).
+// No manual redeclaration needed.
+
 struct Swapchain {
     XrSwapchain handle  = XR_NULL_HANDLE;
     int32_t     width   = 0;
@@ -44,11 +47,36 @@ struct XrContext {
     bool           quit            = false;
 
     // -----------------------------------------------------------------------
+    // XR_FB_passthrough state
+    // -----------------------------------------------------------------------
+    XrPassthroughFB      passthrough_handle = XR_NULL_HANDLE;
+    XrPassthroughLayerFB passthrough_layer  = XR_NULL_HANDLE;
+    bool                 passthrough_active = false;
+
+    // Runtime-loaded passthrough function pointers
+    PFN_xrCreatePassthroughFB       pfn_xrCreatePassthroughFB       = nullptr;
+    PFN_xrDestroyPassthroughFB      pfn_xrDestroyPassthroughFB      = nullptr;
+    PFN_xrPassthroughStartFB        pfn_xrPassthroughStartFB        = nullptr;
+    PFN_xrPassthroughPauseFB        pfn_xrPassthroughPauseFB        = nullptr;
+    PFN_xrCreatePassthroughLayerFB  pfn_xrCreatePassthroughLayerFB  = nullptr;
+    PFN_xrDestroyPassthroughLayerFB pfn_xrDestroyPassthroughLayerFB = nullptr;
+    PFN_xrPassthroughLayerPauseFB   pfn_xrPassthroughLayerPauseFB   = nullptr;
+    PFN_xrPassthroughLayerResumeFB  pfn_xrPassthroughLayerResumeFB  = nullptr;
+
+    // -----------------------------------------------------------------------
     bool create_instance(android_app* app);
     bool create_session();
     bool create_swapchains();
     bool create_input_actions();
     bool attach_action_sets();
+
+    // Load XR_FB_passthrough function pointers and create handles.
+    // Call once after create_session() succeeds.
+    bool create_passthrough();
+
+    // Start/stop the passthrough camera feed.
+    void start_passthrough();
+    void stop_passthrough();
 
     // Returns true if the session state changed
     bool poll_events();
@@ -57,6 +85,8 @@ struct XrContext {
     bool begin_frame(XrFrameState& out_state);
     bool locate_views(XrTime time, XrView out_views[2]);
 
+    // When passthrough_active is true, the passthrough layer is prepended
+    // to the composition layer list so the camera appears behind the GL scene.
     void end_frame(XrTime display_time,
                    XrCompositionLayerProjectionView submitted_views[2],
                    bool should_render);

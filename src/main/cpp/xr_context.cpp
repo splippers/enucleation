@@ -6,11 +6,25 @@
 #define LOG_TAG "MonoView/XR"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
 
 #define XR_CHECK(expr) do { \
     XrResult _r = (expr); \
     if (XR_FAILED(_r)) { LOGE("XR_FAILED(%d) at %s:%d", _r, __FILE__, __LINE__); return false; } \
 } while(0)
+
+// ---------------------------------------------------------------------------
+// Helper: load a single extension function pointer by name, warn on failure.
+// ---------------------------------------------------------------------------
+template<typename T>
+static void load_pfn(XrInstance inst, const char* name, T& out_pfn) {
+    XrResult r = xrGetInstanceProcAddr(inst, name,
+                     reinterpret_cast<PFN_xrVoidFunction*>(&out_pfn));
+    if (XR_FAILED(r)) {
+        LOGW("xrGetInstanceProcAddr(\"%s\") failed: %d", name, r);
+        out_pfn = nullptr;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Instance
@@ -26,13 +40,15 @@ bool XrContext::create_instance(android_app* app) {
     loader_info.applicationContext  = app->activity->clazz;
     XR_CHECK(init_loader(reinterpret_cast<const XrLoaderInitInfoBaseHeaderKHR*>(&loader_info)));
 
+    // Request XR_FB_passthrough alongside the standard extensions.
     const char* extensions[] = {
         XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
+        XR_FB_PASSTHROUGH_EXTENSION_NAME,
     };
 
     XrInstanceCreateInfoAndroidKHR android_info{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
-    android_info.applicationVM      = app->activity->vm;
+    android_info.applicationVM       = app->activity->vm;
     android_info.applicationActivity = app->activity->clazz;
 
     XrApplicationInfo app_info{};
@@ -45,7 +61,7 @@ bool XrContext::create_instance(android_app* app) {
     XrInstanceCreateInfo info{XR_TYPE_INSTANCE_CREATE_INFO};
     info.next                    = &android_info;
     info.applicationInfo         = app_info;
-    info.enabledExtensionCount   = 2;
+    info.enabledExtensionCount   = 3;
     info.enabledExtensionNames   = extensions;
 
     XR_CHECK(xrCreateInstance(&info, &instance));
@@ -225,6 +241,86 @@ bool XrContext::attach_action_sets() {
 }
 
 // ---------------------------------------------------------------------------
+// XR_FB_passthrough — create handles and load function pointers
+// ---------------------------------------------------------------------------
+bool XrContext::create_passthrough() {
+    // Load all required extension function pointers.
+    load_pfn(instance, "xrCreatePassthroughFB",       pfn_xrCreatePassthroughFB);
+    load_pfn(instance, "xrDestroyPassthroughFB",      pfn_xrDestroyPassthroughFB);
+    load_pfn(instance, "xrPassthroughStartFB",        pfn_xrPassthroughStartFB);
+    load_pfn(instance, "xrPassthroughPauseFB",        pfn_xrPassthroughPauseFB);
+    load_pfn(instance, "xrCreatePassthroughLayerFB",  pfn_xrCreatePassthroughLayerFB);
+    load_pfn(instance, "xrDestroyPassthroughLayerFB", pfn_xrDestroyPassthroughLayerFB);
+    load_pfn(instance, "xrPassthroughLayerPauseFB",   pfn_xrPassthroughLayerPauseFB);
+    load_pfn(instance, "xrPassthroughLayerResumeFB",  pfn_xrPassthroughLayerResumeFB);
+
+    if (!pfn_xrCreatePassthroughFB || !pfn_xrCreatePassthroughLayerFB) {
+        LOGE("XR_FB_passthrough function pointers unavailable — passthrough disabled");
+        return false;
+    }
+
+    // Create the top-level passthrough object.
+    XrPassthroughCreateInfoFB pt_info{XR_TYPE_PASSTHROUGH_CREATE_INFO_FB};
+    pt_info.flags = 0;
+    XrResult r = pfn_xrCreatePassthroughFB(session, &pt_info, &passthrough_handle);
+    if (XR_FAILED(r)) {
+        LOGE("xrCreatePassthroughFB failed: %d", r);
+        return false;
+    }
+
+    // Create a reconstruction layer (full-screen camera passthrough).
+    XrPassthroughLayerCreateInfoFB layer_info{XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB};
+    layer_info.passthrough = passthrough_handle;
+    layer_info.purpose     = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
+    layer_info.flags       = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
+    r = pfn_xrCreatePassthroughLayerFB(session, &layer_info, &passthrough_layer);
+    if (XR_FAILED(r)) {
+        LOGE("xrCreatePassthroughLayerFB failed: %d", r);
+        return false;
+    }
+
+    LOGI("XR_FB_passthrough handles created");
+    return true;
+}
+
+void XrContext::start_passthrough() {
+    if (passthrough_active) return;
+    if (!pfn_xrPassthroughStartFB || passthrough_handle == XR_NULL_HANDLE) return;
+
+    XrResult r = pfn_xrPassthroughStartFB(passthrough_handle);
+    if (XR_FAILED(r)) {
+        LOGE("xrPassthroughStartFB failed: %d", r);
+        return;
+    }
+
+    // Resume the layer in case it was previously paused.
+    if (pfn_xrPassthroughLayerResumeFB && passthrough_layer != XR_NULL_HANDLE) {
+        pfn_xrPassthroughLayerResumeFB(passthrough_layer);
+    }
+
+    passthrough_active = true;
+    LOGI("Passthrough started");
+}
+
+void XrContext::stop_passthrough() {
+    if (!passthrough_active) return;
+    if (!pfn_xrPassthroughPauseFB || passthrough_handle == XR_NULL_HANDLE) return;
+
+    // Pause the layer first, then pause the passthrough subsystem.
+    if (pfn_xrPassthroughLayerPauseFB && passthrough_layer != XR_NULL_HANDLE) {
+        pfn_xrPassthroughLayerPauseFB(passthrough_layer);
+    }
+
+    XrResult r = pfn_xrPassthroughPauseFB(passthrough_handle);
+    if (XR_FAILED(r)) {
+        LOGE("xrPassthroughPauseFB failed: %d", r);
+    }
+
+    passthrough_active = false;
+    LOGI("Passthrough stopped");
+}
+
+// ---------------------------------------------------------------------------
 // Event loop
 // ---------------------------------------------------------------------------
 bool XrContext::poll_events() {
@@ -245,6 +341,8 @@ bool XrContext::poll_events() {
                     session_running = true;
                 }
                 if (session_state == XR_SESSION_STATE_STOPPING) {
+                    // Tear down passthrough before ending the session.
+                    if (passthrough_active) stop_passthrough();
                     xrEndSession(session);
                     session_running = false;
                 }
@@ -295,22 +393,56 @@ bool XrContext::locate_views(XrTime time, XrView out_views[2]) {
 void XrContext::end_frame(XrTime display_time,
                           XrCompositionLayerProjectionView submitted_views[2],
                           bool should_render) {
-    XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
-    layer.space     = stage_space;
-    layer.viewCount = 2;
-    layer.views     = submitted_views;
+    // Build the projection layer (the GL-rendered eye content).
+    XrCompositionLayerProjection proj_layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+    proj_layer.space     = stage_space;
+    proj_layer.viewCount = 2;
+    proj_layer.views     = submitted_views;
 
-    const XrCompositionLayerBaseHeader* layers[] = {
-        reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer)
-    };
+    // When passthrough is active the projection layer must have
+    // XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT set so that
+    // pixels with alpha=0 let the passthrough camera show through.
+    if (passthrough_active) {
+        proj_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    }
 
-    XrFrameEndInfo end_info{XR_TYPE_FRAME_END_INFO};
-    end_info.displayTime          = display_time;
-    end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    end_info.layerCount           = should_render ? 1 : 0;
-    end_info.layers               = should_render ? layers : nullptr;
+    if (passthrough_active && passthrough_layer != XR_NULL_HANDLE) {
+        // Passthrough composition layer — sits below the projection layer.
+        XrCompositionLayerPassthroughFB pt_comp_layer{XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
+        pt_comp_layer.flags       = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        pt_comp_layer.space       = XR_NULL_HANDLE;  // passthrough layers don't use a space
+        pt_comp_layer.layerHandle = passthrough_layer;
 
-    xrEndFrame(session, &end_info);
+        // Two-layer stack: passthrough first (bottom), projection on top.
+        const XrCompositionLayerBaseHeader* layers[] = {
+            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&pt_comp_layer),
+            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&proj_layer),
+        };
+
+        XrFrameEndInfo end_info{XR_TYPE_FRAME_END_INFO};
+        end_info.displayTime          = display_time;
+        // Use ADDITIVE blend so the passthrough fills the background fully.
+        // ALPHA_BLEND is not universally supported; OPAQUE with a passthrough
+        // layer beneath is the correct Meta Quest pattern.
+        end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        end_info.layerCount           = should_render ? 2 : 1;
+        end_info.layers               = layers;
+
+        xrEndFrame(session, &end_info);
+    } else {
+        // No passthrough — submit only the projection layer.
+        const XrCompositionLayerBaseHeader* layers[] = {
+            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&proj_layer)
+        };
+
+        XrFrameEndInfo end_info{XR_TYPE_FRAME_END_INFO};
+        end_info.displayTime          = display_time;
+        end_info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        end_info.layerCount           = should_render ? 1 : 0;
+        end_info.layers               = should_render ? layers : nullptr;
+
+        xrEndFrame(session, &end_info);
+    }
 }
 
 bool XrContext::poll_cycle_button() const {
@@ -335,6 +467,18 @@ bool XrContext::poll_cycle_button() const {
 // Teardown
 // ---------------------------------------------------------------------------
 void XrContext::destroy() {
+    // Destroy passthrough objects before destroying the session.
+    if (passthrough_active) stop_passthrough();
+
+    if (passthrough_layer != XR_NULL_HANDLE && pfn_xrDestroyPassthroughLayerFB) {
+        pfn_xrDestroyPassthroughLayerFB(passthrough_layer);
+        passthrough_layer = XR_NULL_HANDLE;
+    }
+    if (passthrough_handle != XR_NULL_HANDLE && pfn_xrDestroyPassthroughFB) {
+        pfn_xrDestroyPassthroughFB(passthrough_handle);
+        passthrough_handle = XR_NULL_HANDLE;
+    }
+
     for (auto& sc : swapchains)
         if (sc.handle != XR_NULL_HANDLE) xrDestroySwapchain(sc.handle);
 

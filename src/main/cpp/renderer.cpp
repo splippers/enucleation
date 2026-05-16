@@ -4,11 +4,13 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// Clear colors that give obvious visual feedback per eye mode:
-//   active eye  → tinted blue-purple
-//   inactive eye → pure black (nothing rendered, no draw calls)
-static constexpr float kActiveColor[4]   = {0.08f, 0.18f, 0.45f, 1.0f};
-static constexpr float kInactiveColor[4] = {0.0f,  0.0f,  0.0f,  1.0f};
+// Clear colors per eye mode:
+//   active eye (no passthrough)  → tinted blue-purple, fully opaque
+//   active eye (with passthrough) → fully transparent so the camera shows through
+//   inactive eye                  → pure black, fully opaque
+static constexpr float kActiveColor[4]            = {0.08f, 0.18f, 0.45f, 1.0f};
+static constexpr float kActivePassthroughColor[4] = {0.0f,  0.0f,  0.0f,  0.0f};
+static constexpr float kInactiveColor[4]          = {0.0f,  0.0f,  0.0f,  1.0f};
 
 bool Renderer::init(EGLDisplay display, EGLContext share_context) {
     egl_display = display;
@@ -86,15 +88,25 @@ void Renderer::create_eye_framebuffers(int eye, const std::vector<GLuint>& textu
     }
 }
 
-void Renderer::render_eye(int eye, uint32_t image_index, EyeMode mode) const {
+void Renderer::render_eye(int eye, uint32_t image_index, EyeMode mode,
+                           bool passthrough_active) const {
     const auto& fb = eye_fbos_[eye][image_index];
     glBindFramebuffer(GL_FRAMEBUFFER, fb.fbo);
     glViewport(0, 0, fb.width, fb.height);
 
     if (eye_is_active(mode, eye)) {
-        glClearColor(kActiveColor[0], kActiveColor[1], kActiveColor[2], kActiveColor[3]);
+        if (passthrough_active) {
+            // Transparent clear — the passthrough composition layer beneath
+            // the projection layer will provide the camera background.
+            const auto* c = kActivePassthroughColor;
+            glClearColor(c[0], c[1], c[2], c[3]);
+        } else {
+            const auto* c = kActiveColor;
+            glClearColor(c[0], c[1], c[2], c[3]);
+        }
     } else {
-        glClearColor(kInactiveColor[0], kInactiveColor[1], kInactiveColor[2], kInactiveColor[3]);
+        const auto* c = kInactiveColor;
+        glClearColor(c[0], c[1], c[2], c[3]);
     }
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
