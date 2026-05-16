@@ -65,6 +65,14 @@ struct XrContext {
     PFN_xrPassthroughLayerResumeFB  pfn_xrPassthroughLayerResumeFB  = nullptr;
 
     // -----------------------------------------------------------------------
+    // XR_FB_foveation — Fixed Foveated Rendering
+    // -----------------------------------------------------------------------
+    XrFoveationProfileFB             foveation_profile = XR_NULL_HANDLE;
+    PFN_xrCreateFoveationProfileFB   pfn_xrCreateFoveationProfileFB  = nullptr;
+    PFN_xrDestroyFoveationProfileFB  pfn_xrDestroyFoveationProfileFB = nullptr;
+    PFN_xrUpdateSwapchainFB          pfn_xrUpdateSwapchainFB         = nullptr;
+
+    // -----------------------------------------------------------------------
     bool create_instance(android_app* app);
     bool create_session();
     bool create_swapchains();
@@ -74,6 +82,10 @@ struct XrContext {
     // Load XR_FB_passthrough function pointers and create handles.
     // Call once after create_session() succeeds.
     bool create_passthrough();
+
+    // Enable Fixed Foveated Rendering.  Non-fatal — call after create_swapchains().
+    // Saves ~20-30% GPU time on Quest by rendering the peripheral region at lower res.
+    bool create_foveation();
 
     // Start/stop the passthrough camera feed.
     void start_passthrough();

@@ -94,6 +94,11 @@ void android_main(android_app* app) {
                 LOGI("Passthrough unavailable — will render without camera feed");
             }
 
+            // Enable Fixed Foveated Rendering — non-fatal.
+            if (!xr.create_foveation()) {
+                LOGI("FFR unavailable — running at full resolution");
+            }
+
             // Renderer shares the EGL context created by XrContext.
             if (!renderer.init(xr.egl_display, xr.egl_context)) continue;
 
