@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.splippers.monoview'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.splippers.monoview'
+        minSdk 29          // Quest 2 minimum
+        targetSdk 32
+        versionCode 1
+        versionName '0.1.0'
+
+        externalNativeBuild {
+            cmake {
+                cppFlags '-std=c++17'
+                arguments '-DANDROID_STL=c++_shared'
+            }
+        }
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    // Prebuilt OpenXR loader from Meta's Mobile SDK.
+    // Download: https://developer.oculus.com/downloads/package/meta-openxr-sdk/
+    // Extract libopenxr_loader.so to src/main/jniLibs/arm64-v8a/
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+}
