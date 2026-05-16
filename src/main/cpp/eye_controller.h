@@ -1,7 +1,8 @@
 #pragma once
 #include <cstdint>
 
-enum class EyeMode : uint8_t { Both, LeftOnly, RightOnly };
+enum class EyeMode   : uint8_t { Both, LeftOnly, RightOnly };
+enum class ButtonPress : uint8_t { None, Short, Long };
 
 // eye: 0 = left, 1 = right
 inline bool eye_is_active(EyeMode mode, int eye) {

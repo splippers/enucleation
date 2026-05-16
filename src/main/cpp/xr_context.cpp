@@ -220,6 +220,15 @@ bool XrContext::create_input_actions() {
     hap_info.subactionPaths      = hand_paths;
     XR_CHECK(xrCreateAction(action_set, &hap_info, &haptic_action));
 
+    // Left thumbstick axis — passthrough opacity control.
+    XrActionCreateInfo stick_info{XR_TYPE_ACTION_CREATE_INFO};
+    std::strncpy(stick_info.actionName,          "left_stick", XR_MAX_ACTION_NAME_SIZE);
+    std::strncpy(stick_info.localizedActionName, "Left Thumbstick", XR_MAX_LOCALIZED_ACTION_NAME_SIZE);
+    stick_info.actionType          = XR_ACTION_TYPE_VECTOR2F_INPUT;
+    stick_info.countSubactionPaths = 1;
+    stick_info.subactionPaths      = &hand_paths[0]; // left only
+    XR_CHECK(xrCreateAction(action_set, &stick_info, &stick_action));
+
     return true;
 }
 
@@ -229,15 +238,17 @@ bool XrContext::attach_action_sets() {
     xrStringToPath(instance, "/user/hand/right/input/a/click", &a_click);
     xrStringToPath(instance, "/user/hand/left/input/x/click",  &x_click);
 
-    XrPath left_haptic, right_haptic;
+    XrPath left_haptic, right_haptic, left_stick;
     xrStringToPath(instance, "/user/hand/left/output/haptic",  &left_haptic);
     xrStringToPath(instance, "/user/hand/right/output/haptic", &right_haptic);
+    xrStringToPath(instance, "/user/hand/left/input/thumbstick", &left_stick);
 
     XrActionSuggestedBinding bindings[] = {
         {cycle_action,  a_click},
         {cycle_action,  x_click},
         {haptic_action, left_haptic},
         {haptic_action, right_haptic},
+        {stick_action,  left_stick},
     };
 
     XrPath oculus_profile;
@@ -246,7 +257,7 @@ bool XrContext::attach_action_sets() {
     XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     suggested.interactionProfile     = oculus_profile;
     suggested.suggestedBindings      = bindings;
-    suggested.countSuggestedBindings = 4;
+    suggested.countSuggestedBindings = 5;
     XR_CHECK(xrSuggestInteractionProfileBindings(instance, &suggested));
 
     XrSessionActionSetsAttachInfo attach_info{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
@@ -268,8 +279,9 @@ bool XrContext::create_passthrough() {
     load_pfn(instance, "xrPassthroughPauseFB",        pfn_xrPassthroughPauseFB);
     load_pfn(instance, "xrCreatePassthroughLayerFB",  pfn_xrCreatePassthroughLayerFB);
     load_pfn(instance, "xrDestroyPassthroughLayerFB", pfn_xrDestroyPassthroughLayerFB);
-    load_pfn(instance, "xrPassthroughLayerPauseFB",   pfn_xrPassthroughLayerPauseFB);
+    load_pfn(instance, "xrPassthroughLayerPauseFB",    pfn_xrPassthroughLayerPauseFB);
     load_pfn(instance, "xrPassthroughLayerResumeFB",  pfn_xrPassthroughLayerResumeFB);
+    load_pfn(instance, "xrPassthroughLayerSetStyleFB", pfn_xrPassthroughLayerSetStyleFB);
 
     if (!pfn_xrCreatePassthroughFB || !pfn_xrCreatePassthroughLayerFB) {
         LOGE("XR_FB_passthrough function pointers unavailable — passthrough disabled");
@@ -528,7 +540,7 @@ void XrContext::apply_haptic_confirm() {
     }
 }
 
-bool XrContext::poll_cycle_button() const {
+ButtonPress XrContext::poll_cycle_button(float dt) {
     XrActiveActionSet active{};
     active.actionSet = action_set;
 
@@ -542,8 +554,46 @@ bool XrContext::poll_cycle_button() const {
     get_info.action = cycle_action;
     xrGetActionStateBoolean(session, &get_info, &state);
 
-    // changedSinceLastSync + currentState means rising edge
-    return state.isActive && state.changedSinceLastSync && state.currentState;
+    if (!state.isActive) { _btn_hold_time = 0.0f; return ButtonPress::None; }
+
+    if (state.currentState) {
+        // Button held down — accumulate time, wait for release
+        _btn_hold_time += dt;
+        return ButtonPress::None;
+    }
+
+    // Button just released
+    if (state.changedSinceLastSync) {
+        float held      = _btn_hold_time;
+        _btn_hold_time  = 0.0f;
+        if (held > 0.04f) // ignore phantom sub-40ms events
+            return held >= 1.2f ? ButtonPress::Long : ButtonPress::Short;
+    } else {
+        _btn_hold_time = 0.0f;
+    }
+    return ButtonPress::None;
+}
+
+float XrContext::poll_left_stick_y() const {
+    if (stick_action == XR_NULL_HANDLE) return 0.0f;
+    XrActionStateVector2f state{XR_TYPE_ACTION_STATE_VECTOR2F};
+    XrActionStateGetInfo  info{XR_TYPE_ACTION_STATE_GET_INFO};
+    info.action        = stick_action;
+    info.subactionPath = hand_paths[0]; // left hand
+    xrGetActionStateVector2f(session, &info, &state);
+    return state.isActive ? state.currentState.y : 0.0f;
+}
+
+void XrContext::set_passthrough_opacity(float opacity) {
+    if (!pfn_xrPassthroughLayerSetStyleFB || passthrough_layer == XR_NULL_HANDLE) return;
+    // Clamp: never go below 0.1 so the user can always see something through the camera.
+    if (opacity < 0.1f) opacity = 0.1f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    passthrough_opacity = opacity;
+
+    XrPassthroughStyleFB style{XR_TYPE_PASSTHROUGH_STYLE_FB};
+    style.textureOpacityFactor = passthrough_opacity;
+    pfn_xrPassthroughLayerSetStyleFB(passthrough_layer, &style);
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@
 #include <android_native_app_glue.h>
 #include <vector>
 #include <string>
+#include "eye_controller.h"
 
 // XR_FB_passthrough PFN_ typedefs are provided by openxr.h (SDK >= 1.0.22).
 // No manual redeclaration needed.
@@ -34,9 +35,13 @@ struct XrContext {
 
     // Input
     XrActionSet action_set     = XR_NULL_HANDLE;
-    XrAction    cycle_action   = XR_NULL_HANDLE;  // A button → cycle eye mode
+    XrAction    cycle_action   = XR_NULL_HANDLE;  // A/X button → cycle or reset eye mode
     XrAction    haptic_action  = XR_NULL_HANDLE;  // haptic output (both controllers)
+    XrAction    stick_action   = XR_NULL_HANDLE;  // left thumbstick vec2 → passthrough opacity
     XrPath      hand_paths[2]  = {};              // left, right
+
+    // Hold-time accumulator for long-press detection (non-const, mutated by poll_cycle_button)
+    float _btn_hold_time = 0.0f;
 
     // EGL state shared with Renderer
     EGLDisplay egl_display = EGL_NO_DISPLAY;
@@ -50,19 +55,21 @@ struct XrContext {
     // -----------------------------------------------------------------------
     // XR_FB_passthrough state
     // -----------------------------------------------------------------------
-    XrPassthroughFB      passthrough_handle = XR_NULL_HANDLE;
-    XrPassthroughLayerFB passthrough_layer  = XR_NULL_HANDLE;
-    bool                 passthrough_active = false;
+    XrPassthroughFB      passthrough_handle  = XR_NULL_HANDLE;
+    XrPassthroughLayerFB passthrough_layer   = XR_NULL_HANDLE;
+    bool                 passthrough_active  = false;
+    float                passthrough_opacity = 1.0f;  // 0.1..1, controlled by left stick Y
 
     // Runtime-loaded passthrough function pointers
-    PFN_xrCreatePassthroughFB       pfn_xrCreatePassthroughFB       = nullptr;
-    PFN_xrDestroyPassthroughFB      pfn_xrDestroyPassthroughFB      = nullptr;
-    PFN_xrPassthroughStartFB        pfn_xrPassthroughStartFB        = nullptr;
-    PFN_xrPassthroughPauseFB        pfn_xrPassthroughPauseFB        = nullptr;
-    PFN_xrCreatePassthroughLayerFB  pfn_xrCreatePassthroughLayerFB  = nullptr;
-    PFN_xrDestroyPassthroughLayerFB pfn_xrDestroyPassthroughLayerFB = nullptr;
-    PFN_xrPassthroughLayerPauseFB   pfn_xrPassthroughLayerPauseFB   = nullptr;
-    PFN_xrPassthroughLayerResumeFB  pfn_xrPassthroughLayerResumeFB  = nullptr;
+    PFN_xrCreatePassthroughFB          pfn_xrCreatePassthroughFB          = nullptr;
+    PFN_xrDestroyPassthroughFB         pfn_xrDestroyPassthroughFB         = nullptr;
+    PFN_xrPassthroughStartFB           pfn_xrPassthroughStartFB           = nullptr;
+    PFN_xrPassthroughPauseFB           pfn_xrPassthroughPauseFB           = nullptr;
+    PFN_xrCreatePassthroughLayerFB     pfn_xrCreatePassthroughLayerFB     = nullptr;
+    PFN_xrDestroyPassthroughLayerFB    pfn_xrDestroyPassthroughLayerFB    = nullptr;
+    PFN_xrPassthroughLayerPauseFB      pfn_xrPassthroughLayerPauseFB      = nullptr;
+    PFN_xrPassthroughLayerResumeFB     pfn_xrPassthroughLayerResumeFB     = nullptr;
+    PFN_xrPassthroughLayerSetStyleFB   pfn_xrPassthroughLayerSetStyleFB   = nullptr;
 
     // -----------------------------------------------------------------------
     // XR_FB_foveation — Fixed Foveated Rendering
@@ -104,7 +111,15 @@ struct XrContext {
                    XrCompositionLayerProjectionView submitted_views[2],
                    bool should_render);
 
-    bool poll_cycle_button() const;  // true on rising edge of cycle action
+    // Short press → cycle; Long press (≥1.2s) → snap back to Both eyes.
+    // Calls xrSyncActions internally.  Must pass frame delta time.
+    ButtonPress poll_cycle_button(float dt);
+
+    // Left thumbstick Y axis value (-1..1).  Returns 0 if stick action unavailable.
+    float poll_left_stick_y() const;
+
+    // Adjust passthrough camera opacity (clamped 0.1..1.0) via xrPassthroughLayerSetStyleFB.
+    void set_passthrough_opacity(float opacity);
 
     // Trigger a short confirmation buzz on both controllers (non-fatal if haptics unavailable).
     void apply_haptic_confirm();

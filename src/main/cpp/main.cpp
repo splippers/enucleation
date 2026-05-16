@@ -2,6 +2,8 @@
 #include <android/log.h>
 #include <cstdio>
 #include <cerrno>
+#include <chrono>
+#include <cmath>
 #include "xr_context.h"
 #include "renderer.h"
 #include "eye_controller.h"
@@ -72,7 +74,16 @@ void android_main(android_app* app) {
 
     LOGI("MonoView starting — restored eye mode: %s", mode_name(eye_mode));
 
+    auto prev_tp = std::chrono::steady_clock::now();
+
     while (!app->destroyRequested && !xr.quit) {
+        // ---- Frame delta time ----
+        auto  now_tp = std::chrono::steady_clock::now();
+        float dt     = std::chrono::duration<float>(now_tp - prev_tp).count();
+        if (dt < 0.001f) dt = 0.001f;
+        if (dt > 0.100f) dt = 0.100f;  // cap at 100 ms to avoid large jumps on resume
+        prev_tp = now_tp;
+
         // ---- Android event pump ----
         int events;
         android_poll_source* source;
@@ -119,12 +130,28 @@ void android_main(android_app* app) {
         if (!xr.session_running) continue;
 
         // ---- Input ----
-        if (xr.poll_cycle_button()) {
+        auto btn = xr.poll_cycle_button(dt);
+
+        if (btn == ButtonPress::Short) {
             eye_mode = cycle_mode(eye_mode);
             LOGI("Eye mode → %s", mode_name(eye_mode));
             apply_eye_mode_passthrough(xr, eye_mode);
             xr.apply_haptic_confirm();
             save_eye_mode(internal_dir, eye_mode);
+        } else if (btn == ButtonPress::Long && eye_mode != EyeMode::Both) {
+            // Long press: comfort-reset back to Both eyes
+            eye_mode = EyeMode::Both;
+            LOGI("Long press — reset to Both eyes");
+            apply_eye_mode_passthrough(xr, eye_mode);
+            xr.apply_haptic_confirm();
+            save_eye_mode(internal_dir, eye_mode);
+        }
+
+        // Passthrough opacity: left thumbstick Y with 0.15 dead zone
+        if (xr.passthrough_active) {
+            float stick_y = xr.poll_left_stick_y();
+            if (fabsf(stick_y) > 0.15f)
+                xr.set_passthrough_opacity(xr.passthrough_opacity + stick_y * dt * 0.8f);
         }
 
         // ---- Frame ----
