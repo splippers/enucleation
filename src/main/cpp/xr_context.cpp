@@ -229,6 +229,15 @@ bool XrContext::create_input_actions() {
     stick_info.subactionPaths      = &hand_paths[0]; // left only
     XR_CHECK(xrCreateAction(action_set, &stick_info, &stick_action));
 
+    // Y (left) / B (right) — toggle edge enhancement filter.
+    XrActionCreateInfo edge_info{XR_TYPE_ACTION_CREATE_INFO};
+    std::strncpy(edge_info.actionName,          "edge_enhance", XR_MAX_ACTION_NAME_SIZE);
+    std::strncpy(edge_info.localizedActionName, "Edge Enhance", XR_MAX_LOCALIZED_ACTION_NAME_SIZE);
+    edge_info.actionType          = XR_ACTION_TYPE_BOOLEAN_INPUT;
+    edge_info.countSubactionPaths = 2;
+    edge_info.subactionPaths      = hand_paths;
+    XR_CHECK(xrCreateAction(action_set, &edge_info, &edge_action));
+
     return true;
 }
 
@@ -243,12 +252,19 @@ bool XrContext::attach_action_sets() {
     xrStringToPath(instance, "/user/hand/right/output/haptic", &right_haptic);
     xrStringToPath(instance, "/user/hand/left/input/thumbstick", &left_stick);
 
+    // Y (left) and B (right) toggle edge enhance.
+    XrPath y_click, b_click;
+    xrStringToPath(instance, "/user/hand/left/input/y/click",  &y_click);
+    xrStringToPath(instance, "/user/hand/right/input/b/click", &b_click);
+
     XrActionSuggestedBinding bindings[] = {
         {cycle_action,  a_click},
         {cycle_action,  x_click},
         {haptic_action, left_haptic},
         {haptic_action, right_haptic},
         {stick_action,  left_stick},
+        {edge_action,   y_click},
+        {edge_action,   b_click},
     };
 
     XrPath oculus_profile;
@@ -257,7 +273,7 @@ bool XrContext::attach_action_sets() {
     XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     suggested.interactionProfile     = oculus_profile;
     suggested.suggestedBindings      = bindings;
-    suggested.countSuggestedBindings = 5;
+    suggested.countSuggestedBindings = 7;
     XR_CHECK(xrSuggestInteractionProfileBindings(instance, &suggested));
 
     XrSessionActionSetsAttachInfo attach_info{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
@@ -582,6 +598,16 @@ float XrContext::poll_left_stick_y() const {
     info.subactionPath = hand_paths[0]; // left hand
     xrGetActionStateVector2f(session, &info, &state);
     return state.isActive ? state.currentState.y : 0.0f;
+}
+
+bool XrContext::poll_edge_button() const {
+    if (edge_action == XR_NULL_HANDLE) return false;
+    XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
+    XrActionStateGetInfo get_info{XR_TYPE_ACTION_STATE_GET_INFO};
+    get_info.action = edge_action;
+    xrGetActionStateBoolean(session, &get_info, &state);
+    // Rising-edge only: button pressed this frame (not held from last frame)
+    return state.isActive && state.changedSinceLastSync && state.currentState;
 }
 
 void XrContext::set_passthrough_opacity(float opacity) {

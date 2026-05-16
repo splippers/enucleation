@@ -76,6 +76,26 @@ static EyeMode load_preferred_mode(const char* dir) {
     return static_cast<EyeMode>(v);
 }
 
+static void save_edge_enhance(const char* dir, bool on) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/edge_enhance.txt", dir);
+    FILE* f = std::fopen(path, "w");
+    if (!f) return;
+    std::fprintf(f, "%d\n", on ? 1 : 0);
+    std::fclose(f);
+}
+
+static bool load_edge_enhance(const char* dir) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/edge_enhance.txt", dir);
+    FILE* f = std::fopen(path, "r");
+    if (!f) return false;
+    int v = 0;
+    std::fscanf(f, "%d", &v);
+    std::fclose(f);
+    return v != 0;
+}
+
 static void apply_eye_mode_passthrough(XrContext& xr, EyeMode mode) {
     if (mode == EyeMode::Both) {
         xr.stop_passthrough();
@@ -96,6 +116,7 @@ void android_main(android_app* app) {
     const char* internal_dir = app->activity->internalDataPath;
     EyeMode    eye_mode       = load_eye_mode(internal_dir);
     EyeMode    preferred_mode = load_preferred_mode(internal_dir);
+    bool       edge_on        = load_edge_enhance(internal_dir);
     bool       initialized    = false;
 
     // How long the user has been continuously in the current single-eye mode.
@@ -104,8 +125,8 @@ void android_main(android_app* app) {
     bool       prefer_locked  = (preferred_mode != EyeMode::Both);
     static constexpr float kAutoPreferSecs = 30.0f;
 
-    LOGI("MonoView starting — restored eye mode: %s  preferred: %s",
-         mode_name(eye_mode), mode_name(preferred_mode));
+    LOGI("MonoView starting — restored eye mode: %s  preferred: %s  edge: %s",
+         mode_name(eye_mode), mode_name(preferred_mode), edge_on ? "ON" : "OFF");
 
     auto prev_tp = std::chrono::steady_clock::now();
 
@@ -185,6 +206,14 @@ void android_main(android_app* app) {
             }
         }
 
+        // Y/B: toggle edge-enhancement filter (persisted across restarts).
+        if (xr.poll_edge_button()) {
+            edge_on = !edge_on;
+            save_edge_enhance(internal_dir, edge_on);
+            xr.apply_haptic_confirm();
+            LOGI("Edge enhance → %s", edge_on ? "ON" : "OFF");
+        }
+
         // Auto-prefer: after 30 continuous seconds in a single-eye mode, record it
         // as the preferred mode with a subtle confirming buzz.
         if (eye_mode != EyeMode::Both) {
@@ -234,7 +263,7 @@ void android_main(android_app* app) {
                                     xr.passthrough_active,
                                     xr.passthrough_opacity,
                                     eye_preferred,
-                                    /*edge_on=*/false);
+                                    edge_on);
 
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
                 xrReleaseSwapchainImage(sc.handle, &release);

@@ -38,6 +38,7 @@ struct XrContext {
     XrAction    cycle_action   = XR_NULL_HANDLE;  // A/X button → cycle or reset eye mode
     XrAction    haptic_action  = XR_NULL_HANDLE;  // haptic output (both controllers)
     XrAction    stick_action   = XR_NULL_HANDLE;  // left thumbstick vec2 → passthrough opacity
+    XrAction    edge_action    = XR_NULL_HANDLE;  // Y/B button → toggle edge enhance
     XrPath      hand_paths[2]  = {};              // left, right
 
     // Hold-time accumulator for long-press detection (non-const, mutated by poll_cycle_button)
@@ -117,6 +118,10 @@ struct XrContext {
 
     // Left thumbstick Y axis value (-1..1).  Returns 0 if stick action unavailable.
     float poll_left_stick_y() const;
+
+    // Returns true on the frame Y (left) or B (right) is pressed.
+    // Must be called after poll_cycle_button() which syncs the action set.
+    bool poll_edge_button() const;
 
     // Adjust passthrough camera opacity (clamped 0.1..1.0) via xrPassthroughLayerSetStyleFB.
     void set_passthrough_opacity(float opacity);
