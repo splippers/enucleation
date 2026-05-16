@@ -51,6 +51,31 @@ static EyeMode load_eye_mode(const char* dir) {
     return static_cast<EyeMode>(v);
 }
 
+// Preferred mode: the single-eye mode the user has settled on (auto-learned after
+// 30 continuous seconds of use, persisted across restarts).  Long-press jumps here
+// rather than always resetting to Both, so a user who prefers LeftOnly always gets
+// back to their preferred state in one gesture instead of two.
+static void save_preferred_mode(const char* dir, EyeMode mode) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/preferred_mode.txt", dir);
+    FILE* f = std::fopen(path, "w");
+    if (!f) return;
+    std::fprintf(f, "%d\n", static_cast<int>(mode));
+    std::fclose(f);
+}
+
+static EyeMode load_preferred_mode(const char* dir) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/preferred_mode.txt", dir);
+    FILE* f = std::fopen(path, "r");
+    if (!f) return EyeMode::Both;
+    int v = 0;
+    std::fscanf(f, "%d", &v);
+    std::fclose(f);
+    if (v < 0 || v > 2) return EyeMode::Both;
+    return static_cast<EyeMode>(v);
+}
+
 static void apply_eye_mode_passthrough(XrContext& xr, EyeMode mode) {
     if (mode == EyeMode::Both) {
         xr.stop_passthrough();
@@ -69,10 +94,18 @@ void android_main(android_app* app) {
     XrContext  xr{};
     Renderer   renderer{};
     const char* internal_dir = app->activity->internalDataPath;
-    EyeMode    eye_mode = load_eye_mode(internal_dir);
-    bool       initialized = false;
+    EyeMode    eye_mode       = load_eye_mode(internal_dir);
+    EyeMode    preferred_mode = load_preferred_mode(internal_dir);
+    bool       initialized    = false;
 
-    LOGI("MonoView starting — restored eye mode: %s", mode_name(eye_mode));
+    // How long the user has been continuously in the current single-eye mode.
+    // After 30s we promote that mode to preferred and give a confirming buzz.
+    float      time_in_mode   = 0.0f;
+    bool       prefer_locked  = (preferred_mode != EyeMode::Both);
+    static constexpr float kAutoPreferSecs = 30.0f;
+
+    LOGI("MonoView starting — restored eye mode: %s  preferred: %s",
+         mode_name(eye_mode), mode_name(preferred_mode));
 
     auto prev_tp = std::chrono::steady_clock::now();
 
@@ -133,18 +166,38 @@ void android_main(android_app* app) {
         auto btn = xr.poll_cycle_button(dt);
 
         if (btn == ButtonPress::Short) {
-            eye_mode = cycle_mode(eye_mode);
+            eye_mode     = cycle_mode(eye_mode);
+            time_in_mode = 0.0f;  // reset timer — user is still exploring
             LOGI("Eye mode → %s", mode_name(eye_mode));
             apply_eye_mode_passthrough(xr, eye_mode);
             xr.apply_haptic_confirm();
             save_eye_mode(internal_dir, eye_mode);
-        } else if (btn == ButtonPress::Long && eye_mode != EyeMode::Both) {
-            // Long press: comfort-reset back to Both eyes
-            eye_mode = EyeMode::Both;
-            LOGI("Long press — reset to Both eyes");
-            apply_eye_mode_passthrough(xr, eye_mode);
-            xr.apply_haptic_confirm();
-            save_eye_mode(internal_dir, eye_mode);
+        } else if (btn == ButtonPress::Long) {
+            // Long press: jump to preferred single-eye mode (or Both if none set yet)
+            EyeMode target = (preferred_mode != EyeMode::Both) ? preferred_mode : EyeMode::Both;
+            if (eye_mode != target) {
+                eye_mode     = target;
+                time_in_mode = 0.0f;
+                LOGI("Long press — jump to preferred mode: %s", mode_name(eye_mode));
+                apply_eye_mode_passthrough(xr, eye_mode);
+                xr.apply_haptic_confirm();
+                save_eye_mode(internal_dir, eye_mode);
+            }
+        }
+
+        // Auto-prefer: after 30 continuous seconds in a single-eye mode, record it
+        // as the preferred mode with a subtle confirming buzz.
+        if (eye_mode != EyeMode::Both) {
+            time_in_mode += dt;
+            if (time_in_mode >= kAutoPreferSecs && preferred_mode != eye_mode) {
+                preferred_mode = eye_mode;
+                prefer_locked  = true;
+                save_preferred_mode(internal_dir, preferred_mode);
+                xr.apply_haptic_confirm();  // one short buzz — "got it"
+                LOGI("Auto-preferred mode: %s", mode_name(preferred_mode));
+            }
+        } else {
+            time_in_mode = 0.0f;
         }
 
         // Passthrough opacity: left thumbstick Y with 0.15 dead zone
