@@ -35,11 +35,12 @@ struct XrContext {
 
     // Input
     XrActionSet action_set     = XR_NULL_HANDLE;
-    XrAction    cycle_action   = XR_NULL_HANDLE;  // A/X button → cycle or reset eye mode
-    XrAction    haptic_action  = XR_NULL_HANDLE;  // haptic output (both controllers)
-    XrAction    stick_action   = XR_NULL_HANDLE;  // left thumbstick vec2 → passthrough opacity
-    XrAction    edge_action    = XR_NULL_HANDLE;  // Y/B button → toggle edge enhance
-    XrPath      hand_paths[2]  = {};              // left, right
+    XrAction    cycle_action        = XR_NULL_HANDLE;  // A/X button → cycle or reset eye mode
+    XrAction    haptic_action       = XR_NULL_HANDLE;  // haptic output (both controllers)
+    XrAction    stick_action        = XR_NULL_HANDLE;  // left thumbstick vec2 → passthrough opacity
+    XrAction    edge_action         = XR_NULL_HANDLE;  // Y/B button → toggle edge enhance
+    XrAction    right_stick_action  = XR_NULL_HANDLE;  // right thumbstick vec2 → brightness
+    XrPath      hand_paths[2]       = {};              // left, right
 
     // Hold-time accumulator for long-press detection (non-const, mutated by poll_cycle_button)
     float _btn_hold_time = 0.0f;
@@ -58,8 +59,8 @@ struct XrContext {
     // -----------------------------------------------------------------------
     XrPassthroughFB      passthrough_handle  = XR_NULL_HANDLE;
     XrPassthroughLayerFB passthrough_layer   = XR_NULL_HANDLE;
-    bool                 passthrough_active  = false;
-    float                passthrough_opacity = 1.0f;  // 0.1..1, controlled by left stick Y
+    bool                 passthrough_active     = false;
+    float                passthrough_opacity    = 1.0f;  // 0.1..1, controlled by left stick Y
 
     // Runtime-loaded passthrough function pointers
     PFN_xrCreatePassthroughFB          pfn_xrCreatePassthroughFB          = nullptr;
@@ -119,12 +120,16 @@ struct XrContext {
     // Left thumbstick Y axis value (-1..1).  Returns 0 if stick action unavailable.
     float poll_left_stick_y() const;
 
+    // Right thumbstick Y axis value (-1..1).  Returns 0 if stick action unavailable.
+    float poll_right_stick_y() const;
+
     // Returns true on the frame Y (left) or B (right) is pressed.
     // Must be called after poll_cycle_button() which syncs the action set.
     bool poll_edge_button() const;
 
-    // Adjust passthrough camera opacity (clamped 0.1..1.0) via xrPassthroughLayerSetStyleFB.
-    void set_passthrough_opacity(float opacity);
+    // Apply passthrough camera style: opacity (0.1..1), brightness (-0.5..0.5),
+    // and contrast boost when edge_on.  Replaces set_passthrough_opacity.
+    void apply_passthrough_style(float opacity, float brightness, bool edge_on);
 
     // Trigger a short confirmation buzz on both controllers (non-fatal if haptics unavailable).
     void apply_haptic_confirm();

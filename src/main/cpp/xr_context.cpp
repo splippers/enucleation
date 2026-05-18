@@ -45,6 +45,7 @@ bool XrContext::create_instance(android_app* app) {
         XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
         XR_FB_PASSTHROUGH_EXTENSION_NAME,
+        "XR_FB_passthrough_color_adjust",  // XrPassthroughBrightnessContrastSaturationFB
         XR_FB_FOVEATION_EXTENSION_NAME,
         XR_FB_SWAPCHAIN_UPDATE_STATE_EXTENSION_NAME,
     };
@@ -63,7 +64,7 @@ bool XrContext::create_instance(android_app* app) {
     XrInstanceCreateInfo info{XR_TYPE_INSTANCE_CREATE_INFO};
     info.next                    = &android_info;
     info.applicationInfo         = app_info;
-    info.enabledExtensionCount   = 5;
+    info.enabledExtensionCount   = 6;
     info.enabledExtensionNames   = extensions;
 
     XR_CHECK(xrCreateInstance(&info, &instance));
@@ -238,6 +239,15 @@ bool XrContext::create_input_actions() {
     edge_info.subactionPaths      = hand_paths;
     XR_CHECK(xrCreateAction(action_set, &edge_info, &edge_action));
 
+    // Right thumbstick axis — passthrough brightness control.
+    XrActionCreateInfo rstick_info{XR_TYPE_ACTION_CREATE_INFO};
+    std::strncpy(rstick_info.actionName,          "right_stick", XR_MAX_ACTION_NAME_SIZE);
+    std::strncpy(rstick_info.localizedActionName, "Right Thumbstick", XR_MAX_LOCALIZED_ACTION_NAME_SIZE);
+    rstick_info.actionType          = XR_ACTION_TYPE_VECTOR2F_INPUT;
+    rstick_info.countSubactionPaths = 1;
+    rstick_info.subactionPaths      = &hand_paths[1];  // right only
+    XR_CHECK(xrCreateAction(action_set, &rstick_info, &right_stick_action));
+
     return true;
 }
 
@@ -247,10 +257,11 @@ bool XrContext::attach_action_sets() {
     xrStringToPath(instance, "/user/hand/right/input/a/click", &a_click);
     xrStringToPath(instance, "/user/hand/left/input/x/click",  &x_click);
 
-    XrPath left_haptic, right_haptic, left_stick;
-    xrStringToPath(instance, "/user/hand/left/output/haptic",  &left_haptic);
-    xrStringToPath(instance, "/user/hand/right/output/haptic", &right_haptic);
-    xrStringToPath(instance, "/user/hand/left/input/thumbstick", &left_stick);
+    XrPath left_haptic, right_haptic, left_stick, right_stick;
+    xrStringToPath(instance, "/user/hand/left/output/haptic",   &left_haptic);
+    xrStringToPath(instance, "/user/hand/right/output/haptic",  &right_haptic);
+    xrStringToPath(instance, "/user/hand/left/input/thumbstick",  &left_stick);
+    xrStringToPath(instance, "/user/hand/right/input/thumbstick", &right_stick);
 
     // Y (left) and B (right) toggle edge enhance.
     XrPath y_click, b_click;
@@ -258,13 +269,14 @@ bool XrContext::attach_action_sets() {
     xrStringToPath(instance, "/user/hand/right/input/b/click", &b_click);
 
     XrActionSuggestedBinding bindings[] = {
-        {cycle_action,  a_click},
-        {cycle_action,  x_click},
-        {haptic_action, left_haptic},
-        {haptic_action, right_haptic},
-        {stick_action,  left_stick},
-        {edge_action,   y_click},
-        {edge_action,   b_click},
+        {cycle_action,       a_click},
+        {cycle_action,       x_click},
+        {haptic_action,      left_haptic},
+        {haptic_action,      right_haptic},
+        {stick_action,       left_stick},
+        {edge_action,        y_click},
+        {edge_action,        b_click},
+        {right_stick_action, right_stick},
     };
 
     XrPath oculus_profile;
@@ -273,7 +285,7 @@ bool XrContext::attach_action_sets() {
     XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     suggested.interactionProfile     = oculus_profile;
     suggested.suggestedBindings      = bindings;
-    suggested.countSuggestedBindings = 7;
+    suggested.countSuggestedBindings = 8;
     XR_CHECK(xrSuggestInteractionProfileBindings(instance, &suggested));
 
     XrSessionActionSetsAttachInfo attach_info{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
@@ -600,6 +612,16 @@ float XrContext::poll_left_stick_y() const {
     return state.isActive ? state.currentState.y : 0.0f;
 }
 
+float XrContext::poll_right_stick_y() const {
+    if (right_stick_action == XR_NULL_HANDLE) return 0.0f;
+    XrActionStateVector2f state{XR_TYPE_ACTION_STATE_VECTOR2F};
+    XrActionStateGetInfo  info{XR_TYPE_ACTION_STATE_GET_INFO};
+    info.action        = right_stick_action;
+    info.subactionPath = hand_paths[1]; // right hand
+    xrGetActionStateVector2f(session, &info, &state);
+    return state.isActive ? state.currentState.y : 0.0f;
+}
+
 bool XrContext::poll_edge_button() const {
     if (edge_action == XR_NULL_HANDLE) return false;
     XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
@@ -610,15 +632,23 @@ bool XrContext::poll_edge_button() const {
     return state.isActive && state.changedSinceLastSync && state.currentState;
 }
 
-void XrContext::set_passthrough_opacity(float opacity) {
+void XrContext::apply_passthrough_style(float opacity, float brightness, bool edge_on) {
     if (!pfn_xrPassthroughLayerSetStyleFB || passthrough_layer == XR_NULL_HANDLE) return;
-    // Clamp: never go below 0.1 so the user can always see something through the camera.
-    if (opacity < 0.1f) opacity = 0.1f;
-    if (opacity > 1.0f) opacity = 1.0f;
+    if (opacity    < 0.1f)  opacity    = 0.1f;
+    if (opacity    > 1.0f)  opacity    = 1.0f;
+    if (brightness < -0.5f) brightness = -0.5f;
+    if (brightness >  0.5f) brightness =  0.5f;
     passthrough_opacity = opacity;
 
+    XrPassthroughBrightnessContrastSaturationFB bcs{
+        XR_TYPE_PASSTHROUGH_BRIGHTNESS_CONTRAST_SATURATION_FB};
+    bcs.brightness = brightness;
+    bcs.contrast   = edge_on ? 1.6f : 1.0f;
+    bcs.saturation = 1.0f;
+
     XrPassthroughStyleFB style{XR_TYPE_PASSTHROUGH_STYLE_FB};
-    style.textureOpacityFactor = passthrough_opacity;
+    style.next                 = &bcs;
+    style.textureOpacityFactor = opacity;
     pfn_xrPassthroughLayerSetStyleFB(passthrough_layer, &style);
 }
 

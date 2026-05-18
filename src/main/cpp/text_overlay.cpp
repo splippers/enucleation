@@ -274,7 +274,7 @@ void TextOverlay::destroy() {
 void TextOverlay::render(uint32_t width, uint32_t height,
                          EyeMode mode, float opacity,
                          bool passthrough_active, bool is_preferred,
-                         bool edge_on) const {
+                         bool edge_on, float brightness) const {
     if (!ready_) return;
 
     // ── Build line 1: mode label + optional badges ─────────────────────
@@ -297,6 +297,8 @@ void TextOverlay::render(uint32_t width, uint32_t height,
     if (edge_on) {
         addStr1(" EDGE");
     }
+    if      (brightness >  0.1f) addStr1(" BRIGHT");
+    else if (brightness < -0.1f) addStr1(" DIM");
 
     // ── Build line 2: opacity readout when passthrough active ─────────
     int chars2[16] = {};

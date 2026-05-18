@@ -29,7 +29,8 @@ public:
                     bool  passthrough_active = false,
                     float opacity            = 1.0f,
                     bool  is_preferred       = false,
-                    bool  edge_on            = false) const;
+                    bool  edge_on            = false,
+                    float brightness         = 0.0f) const;
 
     EGLDisplay egl_display = EGL_NO_DISPLAY;
     EGLContext egl_context = EGL_NO_CONTEXT;

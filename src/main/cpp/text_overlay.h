@@ -7,13 +7,14 @@ public:
     bool init();
     void destroy();
 
-    // Dynamic text overlay: mode label on line 1, opacity readout on line 2.
+    // Dynamic text overlay: mode label on line 1, opacity/brightness readout on line 2.
     // is_preferred: star badge shown when the user's learned preferred mode is active.
-    // edge_on: "EDGE" badge shown when edge-enhance passthrough filter is active.
+    // edge_on: "EDGE" badge + contrast boost active.
+    // brightness: -0.5..0.5 (0 = default); shows BRIGHT / DIM badge when != 0.
     void render(uint32_t width, uint32_t height,
                 EyeMode mode, float opacity,
                 bool passthrough_active, bool is_preferred,
-                bool edge_on) const;
+                bool edge_on, float brightness = 0.0f) const;
 
 private:
     static int charIdx(char c);

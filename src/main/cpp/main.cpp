@@ -96,6 +96,28 @@ static bool load_edge_enhance(const char* dir) {
     return v != 0;
 }
 
+static void save_brightness(const char* dir, float b) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/brightness.txt", dir);
+    FILE* f = std::fopen(path, "w");
+    if (!f) return;
+    std::fprintf(f, "%.4f\n", b);
+    std::fclose(f);
+}
+
+static float load_brightness(const char* dir) {
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/brightness.txt", dir);
+    FILE* f = std::fopen(path, "r");
+    if (!f) return 0.0f;
+    float v = 0.0f;
+    std::fscanf(f, "%f", &v);
+    std::fclose(f);
+    if (v < -0.5f) v = -0.5f;
+    if (v >  0.5f) v =  0.5f;
+    return v;
+}
+
 static void apply_eye_mode_passthrough(XrContext& xr, EyeMode mode) {
     if (mode == EyeMode::Both) {
         xr.stop_passthrough();
@@ -113,11 +135,12 @@ void android_main(android_app* app) {
 
     XrContext  xr{};
     Renderer   renderer{};
-    const char* internal_dir = app->activity->internalDataPath;
-    EyeMode    eye_mode       = load_eye_mode(internal_dir);
-    EyeMode    preferred_mode = load_preferred_mode(internal_dir);
-    bool       edge_on        = load_edge_enhance(internal_dir);
-    bool       initialized    = false;
+    const char* internal_dir        = app->activity->internalDataPath;
+    EyeMode    eye_mode              = load_eye_mode(internal_dir);
+    EyeMode    preferred_mode        = load_preferred_mode(internal_dir);
+    bool       edge_on               = load_edge_enhance(internal_dir);
+    float      passthrough_brightness = load_brightness(internal_dir);
+    bool       initialized           = false;
 
     // How long the user has been continuously in the current single-eye mode.
     // After 30s we promote that mode to preferred and give a confirming buzz.
@@ -125,8 +148,9 @@ void android_main(android_app* app) {
     bool       prefer_locked  = (preferred_mode != EyeMode::Both);
     static constexpr float kAutoPreferSecs = 30.0f;
 
-    LOGI("MonoView starting — restored eye mode: %s  preferred: %s  edge: %s",
-         mode_name(eye_mode), mode_name(preferred_mode), edge_on ? "ON" : "OFF");
+    LOGI("MonoView starting — restored eye mode: %s  preferred: %s  edge: %s  brightness: %.2f",
+         mode_name(eye_mode), mode_name(preferred_mode),
+         edge_on ? "ON" : "OFF", passthrough_brightness);
 
     auto prev_tp = std::chrono::steady_clock::now();
 
@@ -191,6 +215,8 @@ void android_main(android_app* app) {
             time_in_mode = 0.0f;  // reset timer — user is still exploring
             LOGI("Eye mode → %s", mode_name(eye_mode));
             apply_eye_mode_passthrough(xr, eye_mode);
+            if (xr.passthrough_active)
+                xr.apply_passthrough_style(xr.passthrough_opacity, passthrough_brightness, edge_on);
             xr.apply_haptic_confirm();
             save_eye_mode(internal_dir, eye_mode);
         } else if (btn == ButtonPress::Long) {
@@ -201,6 +227,8 @@ void android_main(android_app* app) {
                 time_in_mode = 0.0f;
                 LOGI("Long press — jump to preferred mode: %s", mode_name(eye_mode));
                 apply_eye_mode_passthrough(xr, eye_mode);
+                if (xr.passthrough_active)
+                    xr.apply_passthrough_style(xr.passthrough_opacity, passthrough_brightness, edge_on);
                 xr.apply_haptic_confirm();
                 save_eye_mode(internal_dir, eye_mode);
             }
@@ -212,6 +240,9 @@ void android_main(android_app* app) {
             save_edge_enhance(internal_dir, edge_on);
             xr.apply_haptic_confirm();
             LOGI("Edge enhance → %s", edge_on ? "ON" : "OFF");
+            // Immediately update passthrough contrast to reflect new edge state.
+            if (xr.passthrough_active)
+                xr.apply_passthrough_style(xr.passthrough_opacity, passthrough_brightness, edge_on);
         }
 
         // Auto-prefer: after 30 continuous seconds in a single-eye mode, record it
@@ -229,11 +260,23 @@ void android_main(android_app* app) {
             time_in_mode = 0.0f;
         }
 
-        // Passthrough opacity: left thumbstick Y with 0.15 dead zone
+        // Passthrough style: left stick Y = opacity, right stick Y = brightness.
         if (xr.passthrough_active) {
-            float stick_y = xr.poll_left_stick_y();
-            if (fabsf(stick_y) > 0.15f)
-                xr.set_passthrough_opacity(xr.passthrough_opacity + stick_y * dt * 0.8f);
+            bool style_changed = false;
+            float left_y = xr.poll_left_stick_y();
+            if (fabsf(left_y) > 0.15f) {
+                xr.passthrough_opacity += left_y * dt * 0.8f;
+                style_changed = true;
+            }
+            float right_y = xr.poll_right_stick_y();
+            if (fabsf(right_y) > 0.15f) {
+                passthrough_brightness += right_y * dt * 0.5f;
+                style_changed = true;
+            }
+            if (style_changed) {
+                xr.apply_passthrough_style(xr.passthrough_opacity, passthrough_brightness, edge_on);
+                save_brightness(internal_dir, passthrough_brightness);
+            }
         }
 
         // ---- Frame ----
@@ -263,7 +306,8 @@ void android_main(android_app* app) {
                                     xr.passthrough_active,
                                     xr.passthrough_opacity,
                                     eye_preferred,
-                                    edge_on);
+                                    edge_on,
+                                    passthrough_brightness);
 
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
                 xrReleaseSwapchainImage(sc.handle, &release);
